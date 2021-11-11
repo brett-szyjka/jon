@@ -11,7 +11,7 @@ from azure.storage.queue import QueueClient
 
 # app settings: reonomy file match url
 reonomy_match_url = "https://api.reonomy.com/v2/jobs/file"
-reonomy_auth_header = "Basic bWVyaWRpYW52MjpsNms4ZzBrMXAwZ3BzdHJm"
+reonomy_auth_header = os.environ['reonomy_authentication_header_raw']
 storage_account_url_prefix = "https://stobsvutil.blob.core.windows.net"
 headers = {"Authorization": reonomy_auth_header}
 pending_check_delay_sec = 5
