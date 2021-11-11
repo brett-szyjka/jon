@@ -10,15 +10,18 @@ import azure.functions as func
 from azure.storage.queue import QueueClient
 
 # app settings: reonomy file match url
-reonomy_match_url = "https://api.reonomy.com/api/v2/jobs/file"
+reonomy_match_url = "https://api.reonomy.com/v2/jobs/file"
 reonomy_auth_header = "Basic bWVyaWRpYW52MjpsNms4ZzBrMXAwZ3BzdHJm"
+storage_account_url_prefix = "https://stobsvutil.blob.core.windows.net"
 headers = {"Authorization": reonomy_auth_header}
 pending_check_delay_sec = 5
 
 queue = QueueClient.from_connection_string(os.environ['storage_account_connection_string'], os.environ['resolved_matches_queue_name'])
 
 def submit_match_job_to_reonomy(download_url) -> str:
-  file_bytes = io.BytesIO(requests.get(download_url).content)
+  resulting_id = ""
+  file_content = requests.get(download_url).content
+  file_bytes = io.BytesIO(file_content)
   file_name = download_url.split("/")[-1]
   files = { "file": (file_name, file_bytes) }
   data = {
@@ -39,12 +42,16 @@ def submit_match_job_to_reonomy(download_url) -> str:
         }
       })
   }
-
-  response = requests.post(reonomy_match_url, data=data, files=files, headers=headers).json()
-  return response["id"]
+  try:
+    response = requests.post(reonomy_match_url, data=data, files=files, headers=headers).json()
+    resulting_id = response["id"]
+  except KeyError:
+    logging.error(f"{response['message']}")
+  finally:
+    return resulting_id
 
 def poll_for_match_job_completion(match_job_id) -> (str, str):
-  response = requests.get(f"{reonomy_matach_url}/{match_job_id}", headers=headers).json()
+  response = requests.get(f"{reonomy_match_url}/{match_job_id}", headers=headers).json()
   check_status = response['status']
   if (check_status == "SUCCESS"):
     return (check_status, response['result_url'])
@@ -58,7 +65,7 @@ def enqueue_match_result(salesforce_id, reonomy_id):
 def process_match_results(result_url) -> int:
   counter = 0
   response = requests.get(result_url).content.decode('utf-8')
-  for row in list(csv.reader(response.splitlines(), delimeter=',')):
+  for row in list(csv.reader(response.splitlines()[1:], delimiter=',')):
     if (row[1] != 'MISS'):
       enqueue_match_result(row[7], row[0])
       counter += 1
@@ -69,7 +76,12 @@ def main(msg: func.QueueMessage) -> None:
   file_path = obj['filepath']
   logic_app_workflow_id = (file_path.split("/")[-1]).split(".",1)[0]
   logging.info(f"started processing logic app workflow id: {logic_app_workflow_id}")
-  job_id = submit_match_job_to_reonomy(file_path)
+  download_url = f"{storage_account_url_prefix}{file_path}"
+
+  job_id = submit_match_job_to_reonomy(download_url)
+  if (len(job_id) == 0):
+    logging.error(f"exiting execution triggered by logic app workflow id: {logic_app_workflow_id}")
+    return
   logging.info(f"started reonomy match job id: {job_id} ")
   
   while (True):
